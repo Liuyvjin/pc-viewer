@@ -95,7 +95,7 @@ def write_ply(points, filename, text=True):
 # Simple Point cloud and Volume Renderers
 # ----------------------------------------
 
-def draw_point_cloud(input_points, canvasSize=500, space=200, diameter=25,
+def draw_pointcloud_gray(input_points, canvasSize=500, space=200, diameter=25,
                      xrot=0, yrot=0, zrot=0, switch_xyz=[0,1,2], normalize=True):
     """ Render point cloud to image with alpha channel.
         Input:
@@ -160,9 +160,9 @@ def point_cloud_three_views(points, diameter=10):
     # xrot is azimuth
     # yrot is in-plane
     # zrot is elevation
-    img1 = draw_point_cloud(points, zrot=110/180.0*np.pi, xrot=45/180.0*np.pi, yrot=0/180.0*np.pi, diameter=diameter)
-    img2 = draw_point_cloud(points, zrot=70/180.0*np.pi, xrot=135/180.0*np.pi, yrot=0/180.0*np.pi, diameter=diameter)
-    img3 = draw_point_cloud(points, zrot=180.0/180.0*np.pi, xrot=90/180.0*np.pi, yrot=0/180.0*np.pi, diameter=diameter)
+    img1 = draw_pointcloud_gray(points, zrot=110/180.0*np.pi, xrot=45/180.0*np.pi, yrot=0/180.0*np.pi, diameter=diameter)
+    img2 = draw_pointcloud_gray(points, zrot=70/180.0*np.pi, xrot=135/180.0*np.pi, yrot=0/180.0*np.pi, diameter=diameter)
+    img3 = draw_pointcloud_gray(points, zrot=180.0/180.0*np.pi, xrot=90/180.0*np.pi, yrot=0/180.0*np.pi, diameter=diameter)
     image_large = np.concatenate([img1, img2, img3], 1)
     return image_large
 
@@ -193,150 +193,8 @@ def pyplot_draw_volume(vol, output_filename):
 
 
 # ----------------------------------------
-#  Point cloud Render with RGB
+#  Point cloud Render with RGB color
 # ----------------------------------------
-
-class PCRender():
-    def __init__(self,
-                pointcloud,
-                rgb             =   [99, 184, 255],
-                alpha           =   0.5,
-                bg_color        =   [255,255,255],
-                rot             =   [0, 0, 0],
-                canvas_size     =   500,    # pixels
-                paint_size      =   200,
-                diameter        =   20,
-                depth_decrease  =   0.5,
-                light           =   True,
-                normalize       =   True   ):
-
-        if pointcloud is None or pointcloud.shape[0] == 0:
-            raise ValueError
-        if normalize:
-            pointcloud = normalize_to_unit_sphere(pointcloud)
-        self.pc = pointcloud
-
-        if isinstance(rot, list):
-            rot = euler2mat(*rot)
-        self.rot = np.array(rot)
-
-        self.rgb = np.array(rgb)
-        self.bg_color = np.array(bg_color)
-        self.alpha      = alpha
-        self.depth_dec  = depth_decrease
-        self.diameter   = diameter
-        self.light      = light
-        self.paint_size = paint_size
-
-        if isinstance(canvas_size, int):
-            self.canvas_w = canvas_size
-            self.canvas_h = canvas_size
-        else:
-            self.canvas_w = canvas_size[0]
-            self.canvas_h = canvas_size[1]
-
-        # color_disk, alpha_disk, depth_disk, disk_dx, disk_dy
-        self.update_disk()
-
-    def update(self, diameter=None, canvas_size=None, paint_size=None, rot=None):
-        if diameter is not None:
-            self.diameter = diameter
-            self.update_disk()
-        if canvas_size is not None:
-            self.canvas_w = canvas_size[0]
-            self.canvas_h = canvas_size[1]
-        if paint_size is not None:
-            self.paint_size = paint_size
-        if rot is not None:
-            self.rot = np.array(rot)
-
-    def update_disk(self):
-        """ Pre-compute the Gaussian disk
-            color_disk, alpha_disk, depth_disk, disk_dx, disk_dy
-        """
-        alpha_disk = bresenham_circle_alpha_disk(self.diameter) # [D, D], val 0~1
-        disk_x, disk_y = (alpha_disk > 0).nonzero()
-        self.alpha_disk = alpha_disk[disk_x, disk_y]
-        # map disk_xy to center of circle
-        self.disk_x = disk_x - self.diameter//2
-        self.disk_y = disk_y - self.diameter//2
-        radius = self.diameter/2
-        if self.light:
-            delta = 1/3 * radius
-            self.color_disk = np.exp((-(self.disk_x+delta)**2 - (self.disk_y-delta)**2)/(radius**2))
-        else:
-            self.color_disk = np.exp((-self.disk_x**2 - self.disk_y**2)/(radius**2))
-        self.depth_disk = -np.sqrt(np.maximum(radius**2 - self.disk_x**2 - self.disk_y**2, 0))
-
-    def draw(self):
-        # init canvas
-        img_canvas = np.full((self.canvas_w, self.canvas_h, 3), self.bg_color)
-        img_depth  = np.full((self.canvas_w, self.canvas_h), np.inf)
-
-        # order pc by z, from zmin to zmax: depth_factor = 1 ~ depth_decrease
-        pc = (np.dot(self.rot, self.pc.transpose())).transpose()
-        if pc.shape[0] > 1 :
-            zorder = np.argsort(pc[:, 2])
-            pc = pc[zorder, :]
-            zmax, zmin = pc[-1, 2], pc[0, 2]
-            depth_factor = (zmax - pc[:, 2]) / (zmax - zmin) * (1-self.depth_dec) + self.depth_dec
-        else:
-            depth_factor = [1,]
-
-        # draw points
-        half_w = self.canvas_w//2
-        half_h = self.canvas_h//2
-        radius = self.diameter//2
-        disk_x = self.disk_x + half_w
-        disk_y = self.disk_y + half_h
-        for i in range(pc.shape[0]-1, -1, -1):
-            x_point = int(pc[i, 0] * self.paint_size)
-            y_point = int(pc[i, 1] * self.paint_size)
-            # ball outside canvas
-            if not in_range(x_point, [-half_w - radius, half_w + radius]) or \
-               not in_range(y_point, [-half_h - radius, half_h + radius]):
-                continue
-            x_abs = disk_x + x_point
-            y_abs = disk_y + y_point
-
-            # ball on edge
-            if not in_range(x_point, [-half_w + radius, half_w - radius]) or \
-               not in_range(y_point, [-half_h + radius, half_h - radius]):
-                xy_mask = in_range(x_abs, [0, self.canvas_w]) and \
-                          in_range(y_abs, [0, self.canvas_h])
-                x_abs = x_abs[xy_mask]
-                y_abs = y_abs[xy_mask]
-                depth_disk = self.depth_disk[xy_mask]
-                color_disk = self.color_disk[xy_mask]
-                alpha_disk = self.alpha_disk[xy_mask]
-            else:
-                depth_disk = self.depth_disk
-                color_disk = self.color_disk
-                alpha_disk = self.alpha_disk
-            # check depth
-            depth_mask = depth_disk+pc[i, 2] < img_depth[x_abs, y_abs]
-            img_depth[x_abs, y_abs] = depth_disk+pc[i, 2]
-            x_abs = x_abs[depth_mask]
-            y_abs = y_abs[depth_mask]
-            color_disk = color_disk[depth_mask]
-            alpha_disk = alpha_disk[depth_mask]
-            # draw
-            rgb = self.rgb if self.rgb.size==3 else self.rgb[i]
-            color_disk = color_disk.reshape(-1,1).repeat(3, axis=1)
-            alpha_disk = alpha_disk.reshape(-1,1).repeat(3, axis=1)
-            front_color = color_disk * depth_factor[i] * rgb
-            img_canvas[x_abs, y_abs] = img_canvas[x_abs, y_abs]*(1-alpha_disk) + front_color * alpha_disk
-
-        return np.uint8(img_canvas)
-
-
-def in_range(x, interval):
-    if isinstance(x, np.ndarray):
-        return np.logical_and(x >= interval[0], x < interval[1]).any()
-    else:
-        return (x >= interval[0] and x < interval[1])
-
-
 
 def draw_pointcloud_rgb(    pointcloud,
                             rgb             =   None,
@@ -431,8 +289,12 @@ def draw_pointcloud_rgb(    pointcloud,
     return image
 
 
-
+# ----------------------------------------
+# Tool functions
+# ----------------------------------------
 def bresenham_circle_alpha_disk(diameter):
+    """ using bresenham algrithom to draw a circle
+    """
     radius = (diameter - 1) / 2
     x0, y0 =  radius, radius
     dx, dy = diameter//2-x0, -y0
@@ -481,12 +343,8 @@ def bresenham_circle_alpha_disk(diameter):
     return alpha_disk
 
 
-
-# ----------------------------------------
-# Tool function
-# ----------------------------------------
 def normalize_to_unit_sphere(points):
-    """ normalize scale to fit points in a unit sphere """
+    """ normalize scale to fit points in a sphere [-1, 1]"""
     centroid = np.mean(points, axis=0)
     points -= centroid
     furthest_distance = np.max(np.sqrt(np.sum(abs(points)**2,axis=-1)))
@@ -539,3 +397,9 @@ def rot_angle_axis(angle, axis):
     R = cosval * np.eye(3) + sinval * cross_prod_mat + (1.0 - cosval) * np.outer(u, u)
 
     return R
+
+def in_range(x, interval) -> bool:
+    if isinstance(x, np.ndarray):
+        return np.logical_and(x >= interval[0], x < interval[1]).any()
+    else:
+        return (x >= interval[0] and x < interval[1])

@@ -1,7 +1,8 @@
 import sys
 import os.path as osp
 import numpy as np
-from utils.pc_util import draw_pointcloud_rgb, rot_angle_axis, read_ply
+from utils.pc_util import rot_angle_axis, read_ply
+from utils.pc_render import PC_Render
 from PyQt5.QtWidgets import ( QStatusBar, QVBoxLayout, QWidget,
                              QLabel, QApplication)
 from PyQt5 import QtGui as QG
@@ -11,7 +12,9 @@ BASE_DIR = osp.dirname(osp.abspath(__file__))
 
 
 class PC_Viewer(QWidget):
-
+    """
+    Point cloud visualization Gui.
+    """
     def __init__(   self,
                     pointcloud,
                     rgb         =   [99, 184, 255],
@@ -20,18 +23,26 @@ class PC_Viewer(QWidget):
                     bg_color    =   [255, 255, 255] ):
 
         super().__init__()
-        self.pc = pointcloud
-        self.alpha = alpha
-        self.diameter = diameter
-        self.rgb = rgb
+
+        self.pc_rander = PC_Render(
+            pointcloud = pointcloud,
+            rgb = rgb,
+            alpha = alpha,
+            bg_color = bg_color,
+            diameter = diameter,
+            canvas_size = 700,
+            paint_size = 300
+        )
         self.bg_color = bg_color
+        self.diameter = diameter
         self.canva_size = 700
         self.paint_size = 300
-        self.mouse_x0 = 0
-        self.mouse_y0 = 0
+        self.x_start = 0
+        self.y_start = 0
         self.rot_start = np.eye(3)
         self.rot_relative = np.eye(3)
-        self.scale = 1
+        self.scale = 1  # paint scale factor
+
         self.initUI()
         self.update_img()
         self.update_msg = self.status_bar.showMessage
@@ -67,57 +78,61 @@ class PC_Viewer(QWidget):
         """ save mouse press position """
         if pos.y() > self.height()-20:
             return
-        self.mouse_x0 = pos.x()
-        self.mouse_y0 = pos.y()
+        self.x_start = pos.x()
+        self.y_start = pos.y()
         self.rot_start = np.dot(self.rot_relative, self.rot_start)
 
-
     def mouseMoveEvent(self, pos):
+        """ rotate point cloud """
         if pos.y() > self.height()-20:
             return
         self.update_msg('x={:d}, y={:d}'.format(pos.x(),  pos.y()))
 
-        dx = pos.x() - self.mouse_x0
-        dy = pos.y() - self.mouse_y0
+        dx = pos.x() - self.x_start
+        dy = pos.y() - self.y_start
         axis = np.array([dx, -dy, 0])
         angle = np.sqrt(dx**2 + dy**2) / 200
         self.rot_relative = rot_angle_axis(angle, axis)
-
         self.update_img()
 
     def wheelEvent(self, event: QG.QWheelEvent) -> None:
+        """ scale point cloud """
         if event.angleDelta().y()>0:
-            self.scale += 0.1
+            self.scale += 0.15
         else:
-            self.scale -= 0.1
+            self.scale -= 0.15
         self.scale = max(self.scale, 0.3)
         self.update_img()
 
 
     def update_img(self):
-        diameter = int(self.scale*self.diameter)
-        canva_size = int(self.scale*self.canva_size)
-        paint_size = int(self.scale*self.paint_size)
+        """ redraw image """
+        diameter = int(self.scale * self.diameter)
+        paint_size = int(self.scale * self.paint_size)
         rot = np.dot(self.rot_relative, self.rot_start)
-        img = draw_pointcloud_rgb(  pointcloud  =   self.pc,
-                                    rgb         =   self.rgb,
-                                    alpha       =   self.alpha ,
-                                    diameter    =   diameter,
-                                    rot         =   rot,
-                                    canvasSize  =   canva_size,
-                                    space       =   paint_size,
-                                    bg_color    =   self.bg_color   )
+        self.pc_rander.update(diameter=diameter, paint_size=paint_size, rot=rot)
+        img = self.pc_rander.draw()
         self.img = QG.QPixmap(QG.QImage(img.data, img.shape[1], img.shape[0],
                             img.shape[1]*3, QG.QImage.Format_RGB888))
         self.pc_viewer.setPixmap(self.img)
 
 
+    def resizeEvent(self, a0: QG.QResizeEvent) -> None:
+        self.pc_rander.update(canvas_size=[self.pc_viewer.height(), self.pc_viewer.width()])
+
 
 if __name__=="__main__":
     app = QApplication(sys.argv)
 
+    # --- Load Point Cloud
     # pointcloud = np.random.random((100, 3))
     pointcloud = read_ply('plane.ply')
+
+    # --- Assign Random Colors
+    # rgb = np.random.randint(0, 255, size=pointcloud.shape)
+    # exp = PC_Viewer(pointcloud, rgb)
+
+    # --- Use Default Settings
     exp = PC_Viewer(pointcloud)
 
     sys.exit(app.exec_())

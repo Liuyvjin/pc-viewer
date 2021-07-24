@@ -1,7 +1,7 @@
 import sys
 import os.path as osp
 import numpy as np
-from utils.pc_util import PCRender, rot_angle_axis, read_ply
+from utils.pc_util import draw_pointcloud_rgb, rot_angle_axis, read_ply
 from PyQt5.QtWidgets import ( QStatusBar, QVBoxLayout, QWidget,
                              QLabel, QApplication)
 from PyQt5 import QtGui as QG
@@ -20,26 +20,18 @@ class PC_Viewer(QWidget):
                     bg_color    =   [255, 255, 255] ):
 
         super().__init__()
-
-        self.pc_rander = PCRender(
-            pointcloud = pointcloud,
-            rgb = rgb,
-            alpha = alpha,
-            bg_color = bg_color,
-            diameter = diameter,
-            canvas_size = 700,
-            paint_size = 300
-        )
-        self.bg_color = bg_color
+        self.pc = pointcloud
+        self.alpha = alpha
         self.diameter = diameter
+        self.rgb = rgb
+        self.bg_color = bg_color
         self.canva_size = 700
         self.paint_size = 300
-        self.x_start = 0
-        self.y_start = 0
+        self.mouse_x0 = 0
+        self.mouse_y0 = 0
         self.rot_start = np.eye(3)
         self.rot_relative = np.eye(3)
-        self.scale = 1  # paint scale factor
-
+        self.scale = 1
         self.initUI()
         self.update_img()
         self.update_msg = self.status_bar.showMessage
@@ -70,16 +62,13 @@ class PC_Viewer(QWidget):
         self.setWindowTitle('Pointcloud Viewer')
         self.show()
 
-    def resizeEvent(self, a0: QG.QResizeEvent) -> None:
-        self.pc_rander.update(canvas_size=[self.pc_viewer.width(), self.pc_viewer.height()])
-
 
     def mousePressEvent(self, pos) -> None:
         """ save mouse press position """
         if pos.y() > self.height()-20:
             return
-        self.x_start = pos.x()
-        self.y_start = pos.y()
+        self.mouse_x0 = pos.x()
+        self.mouse_y0 = pos.y()
         self.rot_start = np.dot(self.rot_relative, self.rot_start)
 
 
@@ -88,11 +77,12 @@ class PC_Viewer(QWidget):
             return
         self.update_msg('x={:d}, y={:d}'.format(pos.x(),  pos.y()))
 
-        dx = pos.x() - self.x_start
-        dy = pos.y() - self.y_start
+        dx = pos.x() - self.mouse_x0
+        dy = pos.y() - self.mouse_y0
         axis = np.array([dx, -dy, 0])
         angle = np.sqrt(dx**2 + dy**2) / 200
         self.rot_relative = rot_angle_axis(angle, axis)
+
         self.update_img()
 
     def wheelEvent(self, event: QG.QWheelEvent) -> None:
@@ -105,14 +95,22 @@ class PC_Viewer(QWidget):
 
 
     def update_img(self):
-        diameter = int(self.scale * self.diameter)
-        paint_size = int(self.scale * self.paint_size)
+        diameter = int(self.scale*self.diameter)
+        canva_size = int(self.scale*self.canva_size)
+        paint_size = int(self.scale*self.paint_size)
         rot = np.dot(self.rot_relative, self.rot_start)
-        self.pc_rander.update(diameter=diameter, paint_size=paint_size, rot=rot)
-        img = self.pc_rander.draw()
+        img = draw_pointcloud_rgb(  pointcloud  =   self.pc,
+                                    rgb         =   self.rgb,
+                                    alpha       =   self.alpha ,
+                                    diameter    =   diameter,
+                                    rot         =   rot,
+                                    canvasSize  =   canva_size,
+                                    space       =   paint_size,
+                                    bg_color    =   self.bg_color   )
         self.img = QG.QPixmap(QG.QImage(img.data, img.shape[1], img.shape[0],
                             img.shape[1]*3, QG.QImage.Format_RGB888))
         self.pc_viewer.setPixmap(self.img)
+
 
 
 if __name__=="__main__":
